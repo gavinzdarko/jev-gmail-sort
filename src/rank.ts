@@ -2,7 +2,14 @@
 
 // ---------- Jev client ----------
 const JEV = "https://api.typesafe.ai/v1/systemone";
-const CONCURRENCY = Number(process.env.JEV_CONCURRENCY || 256);
+// Runtime-agnostic: the same file runs in Bun (server) and in the extension's service worker.
+let CONCURRENCY = 256;
+let API_KEY = "";
+export function configure(o: { key?: string; concurrency?: number }) {
+  if (o.key != null) API_KEY = o.key;
+  if (o.concurrency) CONCURRENCY = o.concurrency;
+}
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let active = 0;
 const waiting: (() => void)[] = [];
 async function slot<T>(f: () => Promise<T>): Promise<T> {
@@ -34,26 +41,26 @@ async function once(body: string, signal: AbortSignal) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(JEV, {
       method: "POST",
-      headers: { Authorization: `Bearer ${process.env.TYPESAFE_API_KEY}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
       body,
       signal,
     });
     if (res.ok) return res.json() as Promise<any>;
     const text = await res.text();
     if ((res.status === 429 || res.status >= 500) && attempt < 4) {
-      await Bun.sleep(150 * 2 ** attempt);
+      await sleep(150 * 2 ** attempt);
       continue;
     }
     throw new Error(`jev ${res.status}: ${text.slice(0, 200)}`);
   }
 }
 
-function jev(state: unknown, questions: Record<string, unknown>): Promise<{ answers: Record<string, Answer>; ms: number }> {
+export function jev(state: unknown, questions: Record<string, unknown>): Promise<{ answers: Record<string, Answer>; ms: number }> {
   return slot(async () => {
     const body = JSON.stringify({ model: "jev-latest", state, questions });
     const t0 = performance.now();
     const ctl = [new AbortController()];
-    let timer: Timer | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const r: any = await new Promise((resolve, reject) => {
         let failed = 0;
@@ -88,7 +95,7 @@ function jev(state: unknown, questions: Record<string, unknown>): Promise<{ answ
   });
 }
 
-function summary() {
+export function summary() {
   const l = [...stats.lat].sort((a, b) => a - b);
   const q = (p: number) => (l.length ? Math.round(l[Math.min(l.length - 1, Math.floor(p * l.length))]) : 0);
   return { calls: stats.calls, decisions: stats.decisions, errors: stats.errors, hedges: stats.hedges, p50: q(0.5), p90: q(0.9), costUsd: (stats.inputTokens / 1e6) * 0.042 };
@@ -144,9 +151,10 @@ export async function rank(items: RankItem[], task: RankTask, emit: Emit) {
   Object.assign(stats, { calls: 0, decisions: 0, errors: 0, hedges: 0, inputTokens: 0, lat: [] });
   const ids = items.map((t) => t.id);
   const n = ids.length;
-  // Small n: every pair at once is ONE wave and gives the fit complete information. Past ~250 pairs
-  // Jev queues (measured: 1200 in flight -> p50 11s), so switch to pivot placement.
-  const algo = !task.algo || task.algo === "auto" ? ((n * (n - 1)) / 2 <= 250 ? "full" : "pivot") : task.algo;
+  // A/B (ab/pack.ts): one pair per call is the most accurate shape; packing many questions into a
+  // call is cheaper but drifts (k=8 blocks: tau 0.57 vs 0.97). So: every pair at once while that
+  // fits Jev's ~256-in-flight sweet spot, otherwise a Swiss tournament of single pairs.
+  const algo = !task.algo || task.algo === "auto" ? ((n * (n - 1)) / 2 <= 300 ? "full" : "swiss") : task.algo;
   const cards = new Map(items.map((t) => [t.id, t.card]));
   const seed = new Map<string, number>();
   const played = new Map(ids.map((id) => [id, new Set<string>()]));
@@ -366,7 +374,7 @@ export async function rank(items: RankItem[], task: RankTask, emit: Emit) {
   }
 }
 
-function bradleyTerry(ids: string[], matches: Match[], seed: Map<string, number>) {
+export function bradleyTerry(ids: string[], matches: Match[], seed: Map<string, number>) {
   // MM updates with soft wins. A weak prior game against a virtual player at the triage seed keeps
   // items with few games from drifting to the extremes.
   const s = new Map(ids.map((id) => [id, 1]));

@@ -1,5 +1,6 @@
 import { fetchInbox, type Thread } from "./src/gmail";
-import { rank } from "./src/rank";
+import { rank, configure } from "./src/rank";
+configure({ key: process.env.TYPESAFE_API_KEY, concurrency: Number(process.env.JEV_CONCURRENCY || 256) });
 import { emailTask } from "./src/emails";
 
 const PORT = Number(process.env.PORT || 8383);
@@ -46,8 +47,15 @@ const listView = (t: Thread) => {
   return { ...rest, count: messages.length, attachments: messages.flatMap((m) => m.attachments).slice(0, 3) };
 };
 
+// Dev-only helpers for public/ext-test.html, which runs the real extension against a Gmail mock:
+// a Jev proxy (so the key stays on this machine, never in the page) and Gmail's print view.
+const JEV = "https://api.typesafe.ai/v1/systemone";
+const printView = (t: Thread) =>
+  `<html><body><h2>${t.subject}</h2>${t.messages.map((m) => `<div><b>${m.from.name} &lt;${m.from.email}&gt;</b><p>${m.text.replace(/</g, "&lt;")}</p></div>`).join("")}</body></html>`;
+
 Bun.serve({
   port: PORT,
+  hostname: "127.0.0.1",
   idleTimeout: 120,
   async fetch(req) {
     const url = new URL(req.url);
@@ -61,6 +69,14 @@ Bun.serve({
         await load();
         const t = inbox!.threads.find((x) => x.id === url.pathname.split("/").pop());
         return t ? Response.json(t) : new Response("not found", { status: 404 });
+      }
+      if (url.pathname === "/api/jev" && req.method === "POST") {
+        const r = await fetch(JEV, { method: "POST", headers: { Authorization: `Bearer ${process.env.TYPESAFE_API_KEY}`, "Content-Type": "application/json" }, body: await req.text() });
+        return new Response(r.body, { status: r.status, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.pathname.startsWith("/mail/u/") && url.searchParams.get("view") === "pt") {
+        const t = recent?.threads.find((x) => x.id === url.searchParams.get("th"));
+        return t ? new Response(printView(t), { headers: { "Content-Type": "text/html" } }) : new Response("not found", { status: 404 });
       }
       if (url.pathname === "/api/recent") {
         const r = await loadRecent(Number(url.searchParams.get("hours") || 24), url.searchParams.get("refresh") === "1");

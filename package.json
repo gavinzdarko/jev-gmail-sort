@@ -1,1 +1,12 @@
-{ "name": "jev-gmail-rank", "private": true, "type": "module", "scripts": { "start": "bun run server.ts" } }
+{
+  "name": "jev-gmail-rank",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run server.ts",
+    "build": "bun build src/rank.ts --target browser --format esm --outfile extension/engine.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.0"
+  }
+}

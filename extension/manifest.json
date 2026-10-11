@@ -1,11 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Jev Sort for Gmail",
-  "version": "0.1.0",
-  "description": "Sort your last 24 hours of Gmail by any sentence. Jev ranks every email in about two seconds; nothing in your account is changed.",
+  "version": "1.2.0",
+  "description": "Sort your Gmail by any sentence. \"Which need investor attention?\" Jev ranks what's on your screen in a couple of seconds, right inside Gmail.",
   "permissions": ["storage"],
-  "host_permissions": ["http://localhost:8383/*"],
-  "background": { "service_worker": "background.js" },
+  "host_permissions": ["https://api.typesafe.ai/*", "https://gmail.googleapis.com/*", "https://oauth2.googleapis.com/*", "https://api.openai.com/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
   "content_scripts": [{ "matches": ["https://mail.google.com/*"], "js": ["content.js"], "css": ["content.css"], "run_at": "document_idle" }],
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "action": { "default_title": "Jev Sort for Gmail — settings" },
   "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" }
 }
