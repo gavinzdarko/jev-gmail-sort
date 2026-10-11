@@ -26,7 +26,7 @@ window.chrome = { runtime: {
   }, connect: () => ({ onMessage:{addListener(){}}, disconnect(){}, postMessage(){} })
 } };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-const shortcut = (editor) => { editor.focus(); editor.dispatchEvent(new KeyboardEvent('keydown',{key:'S',code:'KeyS',altKey:true,shiftKey:true,bubbles:true,cancelable:true})); };
+const shortcut = (editor) => { editor.focus(); editor.dispatchEvent(new KeyboardEvent('keydown',{key:'F8',code:'F8',bubbles:true,cancelable:true})); };
 window.addEventListener('load', async () => {
   const results = [], a = document.querySelector('#draft-a'), b = document.querySelector('#draft-b'), original = a.innerHTML;
   const check = (condition, label) => { if (!condition) throw new Error(label); results.push('PASS: '+label); };
@@ -35,7 +35,7 @@ window.addEventListener('load', async () => {
     check(document.querySelectorAll('.jevx-spell-tools').length === 2, 'each compose window gets its own spell check');
     document.querySelector('.jevx-spell-tools input').value = 'email to my professor';
     shortcut(a); await tick();
-    check(requests.length === 1 && requests[0].context.subject === 'Meeting permission' && requests[0].context.purpose === 'email to my professor', 'hotkey sends one request with the active writing context');
+    check(requests.length === 1 && requests[0].context.subject === 'Meeting permission' && requests[0].context.purpose === 'email to my professor', 'single-key F8 sends one request with the active writing context');
     check(requests[0].context.thread.includes('quoted reply') && requests[0].context.recipients.includes('Professor') && !requests[0].draft.includes('quoted reply') && !requests[0].draft.includes('signature'), 'own thread guides fixes while quoted replies and signatures stay protected');
     check(a.querySelector('b').textContent === 'the' && a.textContent.includes('request'), 'confident word fixes apply in place');
     check(a.querySelector('a').textContent === 'teh link' && a.querySelector('a').href === 'https://example.test/teh', 'link markup and text are preserved');

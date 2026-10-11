@@ -49,3 +49,40 @@ chrome.runtime.onConnect.addListener((port) => {
     }
   });
 });
+
+// Presence contains no email text. Actual capture/sort is requested only by a native shortcut.
+const companionClient = crypto.randomUUID();
+async function companionPost(route, value, timeout = 5000) {
+  const response = await fetch(`${SERVER}/api/companion/extension/${route}`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client: companionClient, ...value }), signal: AbortSignal.timeout(timeout) });
+  if (!response.ok) throw new Error("Companion server unavailable");
+  return response.json();
+}
+let activeGmailTab = null;
+async function companionPresence() {
+  try {
+    const window = await chrome.windows.getLastFocused();
+    const [tab] = window.focused ? await chrome.tabs.query({ active: true, windowId: window.id }) : [];
+    const presence = tab && await chrome.tabs.sendMessage(tab.id, { type: "glancePresence" }).catch(() => null);
+    activeGmailTab = presence?.gmail ? tab.id : null;
+    await companionPost("presence", { active: activeGmailTab !== null });
+  } catch { activeGmailTab = null; }
+}
+async function companionLoop() {
+  for (;;) {
+    try {
+      await companionPresence();
+      const { command } = await companionPost("next", {}, 23000);
+      if (!command) continue;
+      let result;
+      try {
+        await companionPresence();
+        if (activeGmailTab === null) throw new Error("Gmail is no longer focused.");
+        result = await chrome.tabs.sendMessage(activeGmailTab, { type: "glanceLookup", mode: command.mode, criterion: command.criterion });
+      } catch { result = { error: "The active Gmail tab could not complete this shortcut. Refresh Gmail and retry." }; }
+      await companionPost("result", { id: command.id, result });
+    } catch { await new Promise((resolve) => setTimeout(resolve, 3000)); }
+  }
+}
+setInterval(() => void companionPresence(), 2000);
+void companionLoop();

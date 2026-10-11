@@ -1,7 +1,9 @@
-import { fetchInbox, type Thread } from "./src/gmail";
+import { fetchInbox, fetchThreadContext, type Thread } from "./src/gmail";
 import { rank } from "./src/rank";
 import { emailTask } from "./src/emails";
 import { spellcheckRequest } from "./src/spellcheck";
+import { companionHandler } from "./src/companion";
+import { companionToken } from "./src/companion-config";
 
 const PORT = Number(process.env.PORT || 8383);
 const CACHE = "data/inbox.json";
@@ -47,12 +49,16 @@ const listView = (t: Thread) => {
   return { ...rest, count: messages.length, attachments: messages.flatMap((m) => m.attachments).slice(0, 3) };
 };
 
+const companion = companionHandler({ token: await companionToken(), recent: () => loadRecent(24), thread: fetchThreadContext });
+
 Bun.serve({
   hostname: "127.0.0.1",
   port: PORT,
   idleTimeout: 120,
   async fetch(req) {
     const url = new URL(req.url);
+    const companionResponse = await companion(req);
+    if (companionResponse) return companionResponse;
     if (url.pathname === "/api/spellcheck") return spellcheckRequest(req);
     try {
       if (url.pathname === "/api/inbox") {

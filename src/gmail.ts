@@ -25,9 +25,9 @@ async function accessToken() {
   return token.value;
 }
 
-async function get(path: string): Promise<any> {
+async function get(path: string, signal?: AbortSignal): Promise<any> {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(GM + path, { headers: { Authorization: `Bearer ${await accessToken()}` } });
+    const res = await fetch(GM + path, { headers: { Authorization: `Bearer ${await accessToken()}` }, signal });
     if (res.ok) return res.json();
     const text = await res.text();
     const quota = res.status === 429 || (res.status === 403 && /quota|rate ?limit/i.test(text));
@@ -116,6 +116,19 @@ export interface Thread {
   senders: string[];
   from: { name: string; email: string };
   messages: Message[];
+}
+
+// Cursor lookup uses the same read-only Google client, fetching only the selected conversation.
+export async function fetchThreadContext(id: string, signal?: AbortSignal) {
+  if (!/^[a-f0-9]{6,32}$/i.test(id)) throw new Error("Invalid Gmail thread id");
+  const bounded = AbortSignal.any([AbortSignal.timeout(8000), ...(signal ? [signal] : [])]);
+  const [thread, owner] = await Promise.all([get(`/threads/${id}?format=full`, bounded), get("/profile", bounded)]);
+  const messages = (thread.messages || []).filter((m: any) => !(m.labelIds || []).includes("DRAFT"));
+  if (!messages.length) throw new Error("No received or sent message in this conversation");
+  const last = messages.at(-1), part = parts(last.payload);
+  return { id, ownerEmail: owner.emailAddress, subject: decodeEntities(header(messages[0], "Subject")) || "(no subject)",
+    snippet: clean(decodeEntities(last.snippet || "")), from: parseAddr(header(last, "From")),
+    messages: [{ from: parseAddr(header(last, "From")), text: clean(part.plain || htmlToText(part.html)).slice(0, 2400) }] };
 }
 
 async function pool<T, R>(xs: T[], n: number, f: (x: T) => Promise<R>, onDone?: (done: number) => void): Promise<R[]> {

@@ -71,7 +71,7 @@ test("limits bound request size and provider work", async () => {
 });
 test("provider failures do not expose credentials or response bodies", async () => {
   await expect(checkSpelling({ draft: "teh" }, { key: "synthetic-secret", fetch: async () => new Response("private server body", { status: 401 }) })).rejects.toThrow("Check the server's key");
-  await expect(checkSpelling({ draft: "teh" }, { key: "synthetic", fetch: async () => { throw new Error("private network details"); } })).rejects.toThrow("could not connect");
+  await expect(checkSpelling({ draft: "teh" }, { key: "synthetic", fetch: async () => { throw new Error("private network details"); } })).rejects.toThrow("connection");
 });
 test("HTTP route rejects wrong methods, web origins, oversized and malformed input", async () => {
   const request = (body: string, headers = {}) => new Request("http://localhost:8383/api/spellcheck", { method: "POST", body, headers: { "Content-Type": "application/json", ...headers } });

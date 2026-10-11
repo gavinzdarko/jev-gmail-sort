@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Jev Sort for Gmail",
-  "version": "0.2.0",
-  "description": "Sort recent Gmail with Jev, or press Alt-Shift-S to correct spelling in your active draft using its writing context.",
+  "version": "0.3.0",
+  "description": "Sort Gmail with Jev, connect Glance for K/L screen context, or press F8 to correct spelling in your active draft.",
   "permissions": ["storage"],
   "host_permissions": ["http://localhost:8383/*"],
   "background": { "service_worker": "background.js" },

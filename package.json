@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "start": "bun run server.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "companion:build": "zsh scripts/build-companion.sh",
+    "companion:pair": "bun run scripts/pair-companion.ts"
   },
   "dependencies": {
     "dictionary-en": "^4.0.0",

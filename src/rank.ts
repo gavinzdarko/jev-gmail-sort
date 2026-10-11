@@ -30,11 +30,11 @@ const stats = { calls: 0, decisions: 0, errors: 0, hedges: 0, inputTokens: 0, la
 let p50 = 200;
 const hedgeAfter = () => Math.min(900, Math.max(300, 3 * p50));
 
-async function once(body: string, signal: AbortSignal) {
+async function once(body: string, signal: AbortSignal, options: JevOptions) {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(JEV, {
+    const res = await (options.fetch || fetch)(JEV, {
       method: "POST",
-      headers: { Authorization: `Bearer ${process.env.TYPESAFE_API_KEY}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${options.key ?? process.env.TYPESAFE_API_KEY}`, "Content-Type": "application/json" },
       body,
       signal,
     });
@@ -48,23 +48,34 @@ async function once(body: string, signal: AbortSignal) {
   }
 }
 
-function jev(state: unknown, questions: Record<string, unknown>): Promise<{ answers: Record<string, Answer>; ms: number }> {
+export interface JevOptions { key?: string; signal?: AbortSignal; fetch?: typeof fetch; recordStats?: boolean }
+// Additional tools reuse the same bounded client without contaminating tournament statistics.
+export function jev(state: unknown, questions: Record<string, unknown>, options: JevOptions = {}): Promise<{ answers: Record<string, Answer>; ms: number }> {
+  const signal = AbortSignal.any([AbortSignal.timeout(8000), ...(options.signal ? [options.signal] : [])]);
+  const recording = options.recordStats !== false;
   return slot(async () => {
+    signal.throwIfAborted();
     const body = JSON.stringify({ model: "jev-latest", state, questions });
     const t0 = performance.now();
     const ctl = [new AbortController()];
+    const abort = () => ctl.forEach((c) => c.abort(signal.reason));
+    signal.addEventListener("abort", abort, { once: true });
     let timer: Timer | undefined;
     try {
       const r: any = await new Promise((resolve, reject) => {
         let failed = 0;
         const launch = (c: AbortController) =>
-          once(body, c.signal).then(resolve, (e) => {
-            if (++failed === ctl.length && (ctl.length > 1 || !timer)) reject(e);
+          once(body, AbortSignal.any([c.signal, signal]), options).then(resolve, (e) => {
+            failed++;
+            if (!recording || signal.aborted || (failed === ctl.length && (ctl.length > 1 || !timer))) reject(e);
           });
         launch(ctl[0]);
-        timer = setTimeout(() => {
+        if (recording) timer = setTimeout(() => {
           timer = undefined;
-          if (stats.hedges > 8 + stats.calls * 0.15) return; // during a backend-wide slowdown, hedging only adds load
+          if (stats.hedges > 8 + stats.calls * 0.15) {
+            if (failed === ctl.length) reject(new Error("Jev request failed"));
+            return;
+          } // during a backend-wide slowdown, hedging only adds load
           stats.hedges++;
           const c = new AbortController();
           ctl.push(c);
@@ -72,17 +83,20 @@ function jev(state: unknown, questions: Record<string, unknown>): Promise<{ answ
         }, hedgeAfter());
       });
       const ms = performance.now() - t0;
+      if (recording) {
       stats.calls++;
       stats.decisions += Object.keys(questions).length;
       stats.inputTokens += r.usage?.input_tokens || 0;
       stats.lat.push(ms);
       p50 = p50 * 0.95 + Math.min(ms, 2000) * 0.05;
+      }
       return { answers: r.answers, ms };
     } catch (e) {
-      stats.errors++;
+      if (recording) stats.errors++;
       throw e;
     } finally {
       clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
       for (const c of ctl) c.abort();
     }
   });

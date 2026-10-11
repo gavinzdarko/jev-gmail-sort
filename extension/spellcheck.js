@@ -85,9 +85,9 @@
     for (const editor of document.querySelectorAll(EDITOR)) {
       if (!visible(editor) || states.get(editor)?.tools.isConnected) continue;
       const tools = document.createElement('div'); tools.className = 'jevx-spell-tools'; tools.contentEditable = 'false';
-      const button = document.createElement('button'); button.type = 'button'; button.textContent = '✦ Spell check'; button.title = 'Check this draft with Jev · Option-Shift-S / Alt-Shift-S';
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = '✦ Spell check'; button.title = 'Check this draft with Jev · F8 (or Option-Shift-S / Alt-Shift-S)';
       const purpose = document.createElement('input'); purpose.type = 'text'; purpose.placeholder = 'Writing purpose (optional)'; purpose.maxLength = 300; purpose.setAttribute('aria-label', 'Jev spell check writing purpose');
-      const note = document.createElement('span'); note.className = 'jevx-spell-note'; note.setAttribute('role', 'status'); note.textContent = '⌥⇧S · checks only when asked';
+      const note = document.createElement('span'); note.className = 'jevx-spell-note'; note.setAttribute('role', 'status'); note.textContent = 'F8 · checks only when asked';
       tools.append(button, purpose, note); editor.before(tools);
       states.set(editor, { tools, button, purpose, note, running: false });
       button.addEventListener('mousedown', (event) => event.preventDefault());
@@ -96,7 +96,8 @@
     }
   }
   document.addEventListener('keydown', (event) => {
-    if (event.isComposing || event.repeat || !event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey || event.code !== 'KeyS') return;
+    const shortcut = (event.code === 'F8' && !event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey) || (event.code === 'KeyS' && event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey);
+    if (event.isComposing || event.repeat || !shortcut) return;
     const editor = event.target.closest?.(EDITOR);
     if (!editor) return;
     event.preventDefault(); event.stopImmediatePropagation(); ensure(); void run(editor);

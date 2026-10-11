@@ -1,5 +1,6 @@
 import nspell from "nspell";
 import dictionary from "dictionary-en";
+import { jev } from "./rank";
 
 const spell = nspell(dictionary);
 for (const word of ["Jev", "Glance", "Gmail", "TypeSafe", "GitHub", "API", "AI", "macOS"]) spell.add(word);
@@ -99,19 +100,13 @@ export async function checkSpelling(input: unknown, options: { key?: string; sig
     criteria: { keep: `Keep the original word exactly: ${word.original}`, ...Object.fromEntries(word.options.map((option, j) => [`fix_${j}`, `Replace only this span with: ${option}`])) }
   }]));
   const signal = AbortSignal.any([AbortSignal.timeout(7000), ...(options.signal ? [options.signal] : [])]);
-  let response: Response;
+  let data: Awaited<ReturnType<typeof jev>>;
   try {
-    response = await (options.fetch || fetch)("https://api.typesafe.ai/v1/systemone", {
-      method: "POST", signal, headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "jev-latest", state: { draft: redact(draft), context: {
-        subject: redact(bounded(context.subject, 300)), recipients: redact(bounded(context.recipients, 500)),
-        purpose: redact(bounded(context.purpose, 300)), thread: redact(bounded(context.thread, 2000))
-      } }, questions })
-    });
-  } catch { throw new SpellcheckError("Jev spell check could not connect or timed out. Your draft is unchanged.", 502); }
-  if (!response.ok) throw new SpellcheckError("Jev spell check failed. Check the server's key and try again. Your draft is unchanged.", 502);
-  let data: any;
-  try { data = await response.json(); } catch { throw new SpellcheckError("Jev returned an invalid spell-check response.", 502); }
+    data = await jev({ draft: redact(draft), context: {
+      subject: redact(bounded(context.subject, 300)), recipients: redact(bounded(context.recipients, 500)),
+      purpose: redact(bounded(context.purpose, 300)), thread: redact(bounded(context.thread, 2000))
+    } }, questions, { ...options, key, signal, recordStats: false });
+  } catch { throw new SpellcheckError("Jev spell check failed. Check the server's key or connection and try again. Your draft is unchanged.", 502); }
   const changes: Change[] = [];
   for (const [i, word] of words.entries()) {
     const answer = data?.answers?.[`word_${i}`], ids = ["keep", ...word.options.map((_, j) => `fix_${j}`)];

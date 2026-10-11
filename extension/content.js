@@ -116,7 +116,7 @@
   const ph = { done: {}, total: {}, t: {} };
   function buildPhases(phases) {
     Object.assign(ph, { done: {}, total: Object.fromEntries(phases.map((p) => [p.key, p.total || 0])), t: {} });
-    P(".jevx-phases").innerHTML = phases.map((p) => `<li data-k="${p.key}"><i></i><span>${esc(p.label)}</span><em></em><u><s></s></u></li>`).join("");
+    if (P(".jevx-phases")) P(".jevx-phases").innerHTML = phases.map((p) => `<li data-k="${p.key}"><i></i><span>${esc(p.label)}</span><em></em><u><s></s></u></li>`).join("");
   }
   function phaseStart(k, total) {
     ph.total[k] = total ?? ph.total[k];
@@ -259,8 +259,9 @@
   }).observe(document.body, { childList: true, subtree: true });
 
   // ---------- run ----------
-  async function run(q) {
+  async function run(q, complete = null) {
     if (st.running) return;
+    st.complete = complete;
     q = (q || "").trim() || DEFAULT_Q;
     closeMenu();
     if (!isList()) location.hash = "#inbox";
@@ -293,7 +294,7 @@
       switch (ev.type) {
         case "plan":
           buildPhases(ev.phases);
-          P(".jevx-algo").textContent = { full: "every pair at once", pivot: "pivot sort", swiss: "Swiss tournament" }[ev.algo] || ev.algo;
+          if (P(".jevx-algo")) P(".jevx-algo").textContent = { full: "every pair at once", pivot: "pivot sort", swiss: "Swiss tournament" }[ev.algo] || ev.algo;
           break;
         case "pivots":
           pivots = new Set(ev.ids);
@@ -340,12 +341,16 @@
           st.rank = ev.importance;
           st.running = false;
           cancelAnimationFrame(raf);
-          P(".s-el").textContent = (ev.ms / 1000).toFixed(1) + "s";
-          P(".s-dec").textContent = ev.jev.decisions.toLocaleString();
-          P(".s-p50").textContent = ev.jev.p50 + "ms";
+          if (P(".s-el")) P(".s-el").textContent = (ev.ms / 1000).toFixed(1) + "s";
+          if (P(".s-dec")) P(".s-dec").textContent = ev.jev.decisions.toLocaleString();
+          if (P(".s-p50")) P(".s-p50").textContent = ev.jev.p50 + "ms";
           applyOrder(true);
           paintButton();
           showTop();
+          const complete = st.complete; st.complete = null;
+          complete?.(ev.jev.errors ? { error: "Some Jev decisions failed; retry the sort before choosing the top email." } : {
+            threadID: ev.order[0], source: `${location.origin}${location.pathname}#inbox/${ev.order[0]}`
+          });
           port.disconnect();
           break;
         }
@@ -372,11 +377,38 @@
   }
 
   function fail(msg) {
+    const complete = st.complete; st.complete = null; complete?.({ error: msg });
     st.running = false;
     paintButton();
     const body = P(".jevx-body");
     if (body) body.innerHTML = `<div class="jevx-err">${esc(msg)}</div>`;
   }
+
+  // Glance's global K/L reuse this extension and the existing server-side Gmail mirror.
+  let hover = null;
+  document.addEventListener("mousemove", (event) => { hover = { x: event.clientX, y: event.clientY }; }, { passive: true });
+  document.addEventListener("mouseleave", () => { hover = null; });
+  chrome.runtime.onMessage?.addListener((msg, _sender, reply) => {
+    if (msg.type === "glancePresence") { reply({ gmail: document.hasFocus() }); return; }
+    if (msg.type !== "glanceLookup") return;
+    if (!document.hasFocus()) { reply({ error: "Focus this Gmail tab first." }); return; }
+    if (msg.mode === "screen") {
+      if (st.running) { reply({ error: "Gmail Sort is already running." }); return; }
+      void run(msg.criterion || st.q, reply).catch(() => fail("Gmail Sort could not complete. Check the local server."));
+      return true;
+    }
+    // Prefer the actual hovered row; an open message uses its stable Gmail API thread id.
+    const tr = hover && document.elementFromPoint(hover.x, hover.y)?.closest("tr.zA");
+    let id = tr && visible(tr) && rowId(tr);
+    if (!id) {
+      const message = [...document.querySelectorAll('[role="main"] [data-legacy-thread-id]')]
+        .find((el) => visible(el) && !el.closest("tr.zA"));
+      id = message?.getAttribute("data-legacy-thread-id");
+      if (!id && !isList()) id = location.hash.match(/\/([a-f0-9]{6,32})$/i)?.[1];
+    }
+    if (!id || !/^[a-f0-9]{6,32}$/i.test(id)) { reply({ error: "Point at an email row or open its conversation first." }); return; }
+    reply({ threadID: id, source: `${location.origin}${location.pathname}#inbox/${id}` });
+  });
 
   ensureButton();
   window.addEventListener("hashchange", () => setTimeout(() => (ensureButton(), applyOrder(false)), 50));
