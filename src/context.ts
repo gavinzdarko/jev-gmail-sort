@@ -4,6 +4,7 @@ export class ContextError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
 }
 export const redact = (text: string) => text
+  .replace(/\b(?:authorization\s*:\s*)?bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "[redacted]")
   .replace(/\b(?:apikey_|sk-|ghp_|github_pat_)[\w-]+|\b[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}\b|\b[A-Za-z0-9+/=_-]{40,}\b/gi, "[redacted]")
   .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|\b(?:api[_ -]?key|password|secret|bearer|token)\s*[:=]\s*\S+|https?:\/\/\S+\?\S+/gi, "[redacted]");
 export const validURL = (text: unknown): text is string => {

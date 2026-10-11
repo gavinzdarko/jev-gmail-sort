@@ -59,13 +59,26 @@ async function companionPost(route, value, timeout = 5000) {
   return response.json();
 }
 let activeGmailTab = null;
-async function companionPresence() {
+let executing = null;
+function cancelCommand(command) {
+  if (!command || command.cancelled) return;
+  command.cancelled = true;
+  void chrome.tabs.sendMessage(command.tab, { type: "glanceCancel", id: command.id }).catch(() => {});
+  command.release({ error: "Gmail shortcut cancelled." });
+}
+let presencePending = null;
+function companionPresence() {
+  return presencePending ||= samplePresence().finally(() => { presencePending = null; });
+}
+async function samplePresence() {
+  const current = executing;
   try {
     const window = await chrome.windows.getLastFocused();
     const [tab] = window.focused ? await chrome.tabs.query({ active: true, windowId: window.id }) : [];
     const presence = tab && await chrome.tabs.sendMessage(tab.id, { type: "glancePresence" }).catch(() => null);
     activeGmailTab = presence?.gmail ? tab.id : null;
-    await companionPost("presence", { active: activeGmailTab !== null });
+    const presenceResult = await companionPost("presence", { active: activeGmailTab !== null, tab: activeGmailTab });
+    if (current && executing === current && (presenceResult.command !== current.id || activeGmailTab !== current.tab)) cancelCommand(current);
   } catch { activeGmailTab = null; }
 }
 async function companionLoop() {
@@ -77,10 +90,17 @@ async function companionLoop() {
       let result;
       try {
         await companionPresence();
-        if (activeGmailTab === null) throw new Error("Gmail is no longer focused.");
-        result = await chrome.tabs.sendMessage(activeGmailTab, { type: "glanceLookup", mode: command.mode, criterion: command.criterion });
+        if (activeGmailTab === null || activeGmailTab !== command.tab) throw new Error("Gmail is no longer focused.");
+        let release;
+        const cancelled = new Promise((resolve) => { release = resolve; });
+        const current = executing = { id: command.id, tab: command.tab, release, cancelled: false };
+        const timer = setTimeout(() => cancelCommand(current), 45000);
+        try {
+          result = await Promise.race([cancelled, chrome.tabs.sendMessage(current.tab, { type: "glanceLookup", id: command.id, mode: command.mode, criterion: command.criterion })]);
+        } finally { clearTimeout(timer); if (executing === current) executing = null; }
       } catch { result = { error: "The active Gmail tab could not complete this shortcut. Refresh Gmail and retry." }; }
-      await companionPost("result", { id: command.id, result });
+      // A cancelled native request may already have released this job; don't stall the next poll.
+      await companionPost("result", { id: command.id, result }).catch(() => {});
     } catch { await new Promise((resolve) => setTimeout(resolve, 3000)); }
   }
 }

@@ -5,15 +5,29 @@
   const visible = (el) => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
   const text = (el, max) => (el?.innerText || el?.textContent || '').trim().slice(0, max);
   function project(editor) {
-    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-    const nodes = []; let draft = '', node;
-    while ((node = walker.nextNode())) {
-      // Keep quoted replies, signatures, links, noneditable chips, and code intact.
-      if (node.parentElement?.closest('blockquote, .gmail_quote, .gmail_signature, a, code, pre, [contenteditable="false"], script, style') || !visible(node.parentElement)) continue;
-      const start = draft.length; draft += node.data;
-      nodes.push({ node, start, end: draft.length });
-      draft += '\n'; // Node boundaries stay explicit; every replacement maps to one original text node.
+    const nodes = []; let draft = '';
+    const boundary = () => { if (draft && !draft.endsWith('\n')) draft += '\n'; };
+    function visit(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const start = draft.length; draft += node.data;
+        nodes.push({ node, start, end: draft.length }); return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      // Inline formatting must not split a word. Real blocks, line breaks and protected regions do.
+      if (!visible(node)) return;
+      if (node.matches('blockquote, .gmail_quote, .gmail_signature, a, code, pre, [contenteditable="false"], script, style')) {
+        // A digit-bearing marker protects partial words adjoining excluded inline content too.
+        if (['inline', 'inline-block', 'contents'].includes(getComputedStyle(node).display)) draft += '__protected0__';
+        else boundary();
+        return;
+      }
+      if (node.tagName === 'BR') { boundary(); return; }
+      const block = node !== editor && !['inline', 'inline-block', 'contents'].includes(getComputedStyle(node).display);
+      if (block) boundary();
+      for (const child of node.childNodes) visit(child);
+      if (block) boundary();
     }
+    visit(editor);
     return { draft, nodes };
   }
   function context(editor, purpose) {
@@ -35,12 +49,13 @@
         throw new Error('Invalid correction response; your draft is unchanged.');
       }
       const entry = snapshot.nodes.find((entry) => entry.start <= start && entry.end >= finish);
-      if (!entry) throw new Error('A word crosses formatting boundaries; your draft is unchanged.');
+      end = finish;
+      // Keep words with internal formatting intact rather than flattening their markup.
+      if (!entry) return null;
       const range = document.createRange();
       range.setStart(entry.node, start - entry.start); range.setEnd(entry.node, finish - entry.start);
-      end = finish;
       return { range, original, replacement };
-    });
+    }).filter(Boolean);
   }
   async function run(editor) {
     const state = states.get(editor);
@@ -63,8 +78,11 @@
       if (focused !== editor && !editor.contains(focused) && !state.tools.contains(focused)) {
         state.note.textContent = 'Focus returned elsewhere. Press the shortcut again in this draft.'; return;
       }
+      if (saved && (selection.rangeCount !== 1 || selection.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START, saved) || selection.getRangeAt(0).compareBoundaryPoints(Range.END_TO_END, saved))) {
+        state.note.textContent = 'Selection changed. Press the shortcut again in this draft.'; return;
+      }
       const plan = planChanges(snapshot, result?.changes);
-      if (!plan.length) { state.note.textContent = 'No confident spelling fixes found.'; return; }
+      if (!plan.length) { state.note.textContent = 'No safely applicable spelling fixes found.'; return; }
       editor.focus();
       let applied = 0;
       // Live Ranges track text edits. Work backwards to preserve positions, formatting, and links.
@@ -91,7 +109,7 @@
       tools.append(button, purpose, note); editor.before(tools);
       states.set(editor, { tools, button, purpose, note, running: false });
       button.addEventListener('mousedown', (event) => event.preventDefault());
-      button.addEventListener('click', () => void run(editor));
+      button.addEventListener('click', () => { editor.focus(); void run(editor); });
       purpose.addEventListener('keydown', (event) => event.stopPropagation());
     }
   }

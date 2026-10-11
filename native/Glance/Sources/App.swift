@@ -375,6 +375,7 @@ struct ToastView: View {
         lastTrigger = Date()
         cancel()
         let id = requestID
+        let target = Accessibility.Target()
         let cursor = NSEvent.mouseLocation
         let useJev = prefs.useJev, days = prefs.days, cursorAnswers = prefs.cursorAnswers
         let tryGmail = gmailOnly || (prefs.gmailEnabled && NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.google.Chrome")
@@ -392,14 +393,14 @@ struct ToastView: View {
             do {
                 if tryGmail || requireGmail {
                     self.toast.model.text = mode == .screen ? "Checking Gmail…" : "Checking this email…"
-                    if let answer = try await self.prefs.gmail.lookup(mode: mode, criterion: criterion, required: requireGmail) {
+                    if let answer = try await self.prefs.gmail.lookup(mode: mode, criterion: criterion, required: requireGmail, target: target) {
                         try Task.checkCancellation()
                         guard self.requestID == id else { return }
                         self.show(answer, start: start, gmail: true)
                         return
                     }
                 }
-                let context = try await Capture.read(mode: mode, cursor: cursor)
+                let context = try await Capture.read(mode: mode, cursor: cursor, target: target)
                 try Task.checkCancellation()
                 self.toast.model.text = mode == .screen && useJev ? "Finding the useful part…" : "Searching for context…"
                 // In cursor mode preserve proximity instead of the full-screen heuristic ranking.

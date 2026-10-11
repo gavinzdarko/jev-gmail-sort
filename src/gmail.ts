@@ -1,15 +1,19 @@
 // Read-only Gmail access. The refresh is downscoped to gmail.readonly, so the access token
 // this process holds cannot modify, send or delete anything, and we only ever issue GETs.
+import { setTimeout as sleep } from "node:timers/promises";
+
 const READONLY = "https://www.googleapis.com/auth/gmail.readonly";
 const GM = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 let token: { value: string; exp: number } | null = null;
 
-async function accessToken() {
+async function accessToken(signal?: AbortSignal) {
+  signal?.throwIfAborted();
   if (token && token.exp > Date.now() + 60e3) return token.value;
   const cred = await Bun.file(process.env.GOOGLE_TOKEN_FILE!).json();
   const res = await fetch(cred.token_uri || "https://oauth2.googleapis.com/token", {
     method: "POST",
+    signal,
     body: new URLSearchParams({
       client_id: cred.client_id,
       client_secret: cred.client_secret,
@@ -27,12 +31,13 @@ async function accessToken() {
 
 async function get(path: string, signal?: AbortSignal): Promise<any> {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(GM + path, { headers: { Authorization: `Bearer ${await accessToken()}` }, signal });
+    signal?.throwIfAborted();
+    const res = await fetch(GM + path, { headers: { Authorization: `Bearer ${await accessToken(signal)}` }, signal });
     if (res.ok) return res.json();
     const text = await res.text();
     const quota = res.status === 429 || (res.status === 403 && /quota|rate ?limit/i.test(text));
     if ((quota || res.status >= 500) && attempt < 6) {
-      await Bun.sleep((quota ? 2000 : 400) * 2 ** Math.min(attempt, 4));
+      await sleep((quota ? 2000 : 400) * 2 ** Math.min(attempt, 4), undefined, { signal });
       continue;
     }
     throw new Error(`gmail ${res.status} ${path.split("?")[0]}: ${text.slice(0, 200)}`);

@@ -52,6 +52,17 @@ test("passwords, tokens, addresses, links, inline code and identifiers are prote
     for (const value of [secret, token, "person@example.com", "q=private", "const teh", "item123"]) expect(outgoing).not.toContain(value);
   }) });
 });
+test("standard bearer credentials are masked in drafts and writing context", async () => {
+  const token = "abcdefghijklmnopqrstuvwxabcdefgh";
+  const authorization = `Authorization: Bearer ${token}`;
+  expect(candidates(authorization)).toEqual([]);
+  await checkSpelling({ draft: `teh ${authorization}`, context: { purpose: `bearer ${token}` } }, {
+    key: "synthetic", fetch: chooser({ teh: "the" }, (body) => expect(JSON.stringify(body)).not.toContain(token))
+  });
+});
+test("protected inline markers also exclude adjacent partial words", () => {
+  expect(candidates("permis__protected0__sion teh").map((word) => word.original)).toEqual(["teh"]);
+});
 test("low confidence or low selected probability leaves the draft unchanged", async () => {
   for (const answer of [{ choice: "fix_0", confidence: 0.2, probabilities: { fix_0: 0.99 } }, { choice: "fix_0", confidence: 0.99, probabilities: { fix_0: 0.6 } }]) {
     const result = await checkSpelling({ draft: "teh" }, { key: "synthetic", fetch: async () => Response.json({ answers: { word_0: answer } }) });
@@ -77,6 +88,9 @@ test("HTTP route rejects wrong methods, web origins, oversized and malformed inp
   const request = (body: string, headers = {}) => new Request("http://localhost:8383/api/spellcheck", { method: "POST", body, headers: { "Content-Type": "application/json", ...headers } });
   expect((await spellcheckRequest(new Request("http://localhost:8383/api/spellcheck"))).status).toBe(405);
   expect((await spellcheckRequest(request("{}", { Origin: "https://evil.test" }))).status).toBe(403);
+  expect((await spellcheckRequest(new Request("http://evil.test:8383/api/spellcheck", { method: "POST", headers: { Origin: "http://evil.test:8383", "Content-Type": "application/json" }, body: '{"draft":"Hello world"}' }))).status).toBe(403);
+  expect((await spellcheckRequest(request('{"draft":"Hello world"}', { "Sec-Fetch-Site": "cross-site" }))).status).toBe(403);
+  expect((await spellcheckRequest(request('{"draft":"Hello world"}', { Origin: `chrome-extension://${"a".repeat(32)}`, "Sec-Fetch-Site": "cross-site" }))).status).toBe(200);
   expect((await spellcheckRequest(request("{}", { "Content-Type": "text/plain" }))).status).toBe(415);
   expect((await spellcheckRequest(request("{"))).status).toBe(400);
   expect((await spellcheckRequest(request("x".repeat(64001)))).status).toBe(413);

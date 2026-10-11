@@ -8,12 +8,12 @@
 </tbody></table></div><pre id="results">Running…</pre>
 <script>
 location.hash = '#inbox';
-const listeners = [], calls = []; let events = null;
+const listeners = [], calls = []; let events = null, releaseMeta = null, holdMeta = false, disconnects = 0;
 const threads = [{id:'abc12345',subject:'Routine newsletter',from:{name:'Newsletter',email:'newsletter@example.test'},senders:['Newsletter']},
   {id:'def67890',subject:'Please confirm the meeting',from:{name:'Alex',email:'alex@example.test'},senders:['Alex']}];
 window.chrome = {runtime:{onMessage:{addListener:f=>listeners.push(f)},
- sendMessage:async msg=>{calls.push(msg);return {email:'me@example.test',threads};},
- connect:()=>{const handlers=[];return {onMessage:{addListener:f=>handlers.push(f)},disconnect(){},postMessage(msg){
+ sendMessage:async msg=>{calls.push(msg);if(holdMeta)return new Promise(resolve=>{releaseMeta=()=>resolve({email:'me@example.test',threads});});return {email:'me@example.test',threads};},
+ connect:()=>{const handlers=[];return {onMessage:{addListener:f=>handlers.push(f)},disconnect(){disconnects++;},postMessage(msg){
    calls.push(msg); events=()=>{
      handlers.forEach(f=>f({type:'plan',algo:'full',phases:[]}));
      handlers.forEach(f=>f({type:'standings',order:['def67890','abc12345']}));
@@ -28,6 +28,10 @@ window.addEventListener('load',async()=>{
  try{
   check(!!document.querySelector('.jevx-sort'),'existing Sort button is retained');
   check((await send({type:'glancePresence'})).gmail,'only a focused Gmail document reports active');
+  holdMeta=true;const loading=send({type:'glanceLookup',id:'loading-command',mode:'screen'});await tick();
+  await send({type:'glanceCancel',id:'loading-command'});check((await loading).error.includes('cancelled'),'a shortcut can cancel while inbox metadata is loading');
+  releaseMeta();holdMeta=false;await tick();
+  check(!calls.some(c=>c.type==='analyze'),'late inbox metadata cannot start a cancelled tournament');
   const pending=send({type:'glanceLookup',mode:'screen',criterion:'deadline first'});await tick();
   check(calls.find(c=>c.type==='analyze')?.q==='deadline first','native K uses the existing analyze port and criterion');
   check((await send({type:'glanceLookup',mode:'screen'})).error.includes('already running'),'concurrent shortcut cannot start a duplicate sort');
@@ -46,6 +50,18 @@ window.addEventListener('load',async()=>{
   document.querySelector('table').style.display='';
   const again=send({type:'glanceLookup',mode:'screen'});await tick();document.querySelector('.jevx-x').click();events();
   check((await again).threadID==='def67890','closing the panel does not strand the native K response');
+  const cancellable = send({type:'glanceLookup',id:'command-1',mode:'screen'});await tick();const lateEvents=events, beforeCancel=disconnects;
+  await send({type:'glanceCancel',id:'another-command'});
+  check(disconnects===beforeCancel,'an unrelated cancel cannot stop the current shortcut');
+  await send({type:'glanceCancel',id:'command-1'});
+  check((await cancellable).error.includes('cancelled') && disconnects>beforeCancel,'native cancellation disconnects the existing Sort port and resolves its reply');
+  const newer=send({type:'glanceLookup',id:'command-2',mode:'screen'});await tick();const currentEvents=events;
+  lateEvents();
+  check(document.querySelector('.jevx-sort').textContent.includes('Sorting'),'late cancelled tournament events cannot complete a newer sort');
+  currentEvents();check((await newer).threadID==='def67890','a new shortcut can run after cancellation');
+  const escape = send({type:'glanceLookup',id:'command-3',mode:'screen'});await tick();
+  document.dispatchEvent(new KeyboardEvent('keydown',{code:'Escape',key:'Escape',bubbles:true}));
+  check((await escape).error.includes('cancelled'),'Escape cancels a native-triggered sort immediately');
   document.querySelector('#results').textContent=results.join('\n')+'\n\n'+results.length+' browser checks passed.';
  }catch(error){document.querySelector('#results').textContent=results.join('\n')+'\nFAIL: '+error.message;}
 });

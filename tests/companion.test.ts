@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { lookupContext, inspectEmail, sentence } from "../src/context";
+import { lookupContext, inspectEmail, sentence, redact } from "../src/context";
 import { CompanionHub, companionHandler } from "../src/companion";
 import { jev, rank } from "../src/rank";
 import { fetchThreadContext } from "../src/gmail";
@@ -43,11 +43,24 @@ test("unsupported, verbose, low-confidence and uncited output never falls back t
   expect(sentence("Short excerpt")).toBeNull();
 });
 test("screen secrets are redacted and Jev may decline a topic", async () => {
+  expect(redact("Authorization: Bearer abcdefghijklmnopqrstuvwxabcdefgh")).toBe("[redacted]");
   const data = { ...input(), candidates: [{ text: "How do actors work? person@example.test password=private apikey_secret123456 https://example.test/?token=private" }] };
   await lookupContext(data, { jevKey: "synthetic", exaKey: "synthetic", fetch: provider((_url, body) => {
     expect(JSON.stringify(body)).not.toContain("password=private"); expect(JSON.stringify(body)).not.toContain("person@example.test");
   }) });
   await expect(lookupContext(input(), { jevKey: "synthetic", exaKey: "synthetic", fetch: async () => Response.json({ answers: { focus: { choice: "none", confidence: 1 } } }) })).rejects.toThrow("No useful public topic");
+});
+test("an aborted poll cannot claim a command, and commands retain their original tab", async () => {
+  const hub = new CompanionHub(), signal = new AbortController().signal;
+  hub.heartbeat("synthetic-client-01", true, 42);
+  const pending = hub.request("screen", "", signal), ctl = new AbortController(); ctl.abort();
+  expect(await hub.next("synthetic-client-01", ctl.signal)).toBeNull();
+  const command = await hub.next("synthetic-client-01", signal);
+  expect(command?.tab).toBe(42); expect(hub.current("synthetic-client-01")).toBe(command!.id);
+  hub.heartbeat("synthetic-client-01", true, 43);
+  expect(command?.tab).toBe(42);
+  hub.respond("synthetic-client-01", command!.id, { error: "Focus changed" });
+  await expect(pending).rejects.toThrow("Focus changed"); expect(hub.current("synthetic-client-01")).toBeNull();
 });
 test("provider errors are bounded and do not expose raw response bodies", async () => {
   await expect(lookupContext(input("cursor"), { exaKey: "synthetic", fetch: async () => new Response("private provider body", { status: 401 }) })).rejects.toThrow("Exa could not");
@@ -161,6 +174,20 @@ test("the original full, pivot and Swiss ranking algorithms still order syntheti
     for (const algo of ["full", "pivot", "swiss"] as const) {
       const r = await rank(Array.from({ length: 5 }, (_, i) => ({ id: `card${i}`, card: { score: i } })), { noun: "card", context: {}, criterion: "higher score first", algo }, () => {});
       expect(r.order[0]).toBe("card4"); expect(r.order).toHaveLength(5); expect(r.jev.errors).toBe(0);
+    }
+  } finally { globalThis.fetch = original; }
+});
+test("cancelling any tournament aborts provider calls and never publishes a completed order", async () => {
+  const original = globalThis.fetch;
+  try {
+    for (const algo of ["full", "pivot", "swiss"] as const) {
+      let aborted = 0; const events: any[] = [], ctl = new AbortController();
+      globalThis.fetch = async (_url, init: any) => new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => { aborted++; reject(init.signal.reason); }, { once: true });
+      });
+      const pending = rank(Array.from({ length: 5 }, (_, i) => ({ id: `card${i}`, card: { score: i } })), { noun: "card", context: {}, criterion: "higher score first", algo }, (event) => events.push(event), ctl.signal);
+      ctl.abort(); await expect(pending).rejects.toThrow();
+      expect(aborted).toBeGreaterThan(0); expect(events.some((event) => event.type === "done")).toBe(false);
     }
   } finally { globalThis.fetch = original; }
 });

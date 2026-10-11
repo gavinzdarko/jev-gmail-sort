@@ -7,6 +7,31 @@ enum CaptureMode { case screen, cursor }
 struct ScreenText { let text: String; let selected: String; let candidates: [Candidate] }
 
 enum Accessibility {
+    struct Target {
+        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let element = Accessibility.focused()
+        let window: AXUIElement? = {
+            guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                  let value = Accessibility.attribute(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute),
+                  CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+            return (value as! AXUIElement)
+        }()
+        func check() throws {
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, !Accessibility.isSecure() else {
+                throw GlanceError.message("Focus changed. Press the shortcut again on the intended content.")
+            }
+            if let element {
+                guard let current = Accessibility.focused(), CFEqual(element, current) else {
+                    throw GlanceError.message("Focus changed. Press the shortcut again on the intended content.")
+                }
+            }
+            if let window, let pid {
+                guard let current = Accessibility.attribute(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute), CFEqual(window, current) else {
+                    throw GlanceError.message("Window changed. Press the shortcut again on the intended content.")
+                }
+            }
+        }
+    }
     static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
         var result: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, name as CFString, &result) == .success else { return nil }
@@ -56,7 +81,8 @@ enum Capture {
     static func crop(screen: CGRect, cursor: CGPoint) -> CGRect {
         CGRect(x: cursor.x - 320, y: cursor.y - 180, width: 640, height: 360).intersection(screen)
     }
-    @MainActor static func read(mode: CaptureMode, cursor: NSPoint) async throws -> ScreenText {
+    @MainActor static func read(mode: CaptureMode, cursor: NSPoint, target focus: Accessibility.Target) async throws -> ScreenText {
+        try focus.check()
         guard !Accessibility.isSecure() else { throw GlanceError.message("Move away from the password field before looking up.") }
         guard CGPreflightScreenCaptureAccess() else {
             throw GlanceError.message("Enable Screen Recording for Glance in Settings, then reopen Glance.")
@@ -65,6 +91,7 @@ enum Capture {
         let target = screen(at: cursor)
         let id = (target.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as! NSNumber).uint32Value
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        try focus.check()
         guard let display = content.displays.first(where: { $0.displayID == id }) else {
             throw GlanceError.message("Could not find this display.")
         }
@@ -90,6 +117,7 @@ enum Capture {
                 y: 1 - (target.frame.maxY - cursor.y - region.minY) / region.height))
         }.value
         try Task.checkCancellation()
+        try focus.check()
         return ScreenText(text: text, selected: selected, candidates: TextTools.candidates(text, selected: selected))
     }
     static func recognize(_ image: CGImage, nearCursor: Bool, point: CGPoint = CGPoint(x: 0.5, y: 0.5)) throws -> String {

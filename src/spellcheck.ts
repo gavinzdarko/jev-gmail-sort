@@ -1,6 +1,7 @@
 import nspell from "nspell";
 import dictionary from "dictionary-en";
 import { jev } from "./rank";
+import { localOrigin } from "./local-origin";
 
 const spell = nspell(dictionary);
 for (const word of ["Jev", "Glance", "Gmail", "TypeSafe", "GitHub", "API", "AI", "macOS"]) spell.add(word);
@@ -46,7 +47,7 @@ export class SpellcheckError extends Error {
 }
 const bounded = (value: unknown, max: number) => typeof value === "string" ? value.slice(0, max) : "";
 function privateRanges(text: string) {
-  const pattern = /https?:\/\/[^\s<>]+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|`[^`]*`|\b(?:apikey_|sk-|ghp_|github_pat_)[\w-]+|\b[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}\b|\b(?:password|secret|token|api[_ -]?key)\s*[:=]\s*\S+|\b[A-Za-z0-9_-]*\d[A-Za-z0-9_-]*\b/gi;
+  const pattern = /https?:\/\/[^\s<>]+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|`[^`]*`|\b(?:apikey_|sk-|ghp_|github_pat_)[\w-]+|\b[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}\b|\b(?:authorization\s*:\s*)?bearer\s+[A-Za-z0-9._~+\/-]+=*|\b(?:password|secret|token|api[_ -]?key)\s*[:=]\s*\S+|\b[A-Za-z0-9_-]*\d[A-Za-z0-9_-]*\b/gi;
   return [...text.matchAll(pattern)].map((m) => [m.index!, m.index! + m[0].length]);
 }
 const redact = (text: string) => {
@@ -124,8 +125,7 @@ export async function checkSpelling(input: unknown, options: { key?: string; sig
 
 export async function spellcheckRequest(req: Request) {
   if (req.method !== "POST") return Response.json({ error: "Use POST." }, { status: 405 });
-  const origin = req.headers.get("Origin");
-  if (origin && origin !== new URL(req.url).origin && !/^chrome-extension:\/\/[a-p]{32}$/.test(origin)) return Response.json({ error: "Origin denied." }, { status: 403 });
+  if (!localOrigin(req)) return Response.json({ error: "Origin denied." }, { status: 403 });
   if (req.headers.get("Content-Type")?.split(";")[0].trim() !== "application/json") return Response.json({ error: "JSON required." }, { status: 415 });
   try {
     const reader = req.body?.getReader();

@@ -29,6 +29,7 @@ enum TextTools {
     static func redact(_ text: String) -> String {
         var result = text
         let patterns = [
+            #"(?i)\b(?:authorization\s*:\s*)?bearer\s+[A-Za-z0-9._~+/\-]+=*"#,
             #"(?i)\b(?:apikey_|sk-|ghp_|github_pat_)[A-Za-z0-9_\-]{8,}\b"#,
             #"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"#,
             #"\b[A-Za-z0-9+/=_\-]{40,}\b"#,

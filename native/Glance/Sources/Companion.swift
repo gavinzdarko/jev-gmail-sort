@@ -74,11 +74,12 @@ struct GmailResult: Decodable {
     func check(activeOnly: Bool = false) async throws -> Bool {
         let health = try await CompanionAPI.health(); return activeOnly ? health.active : health.connected
     }
-    func lookup(mode: CaptureMode, criterion: String, required: Bool = false) async throws -> Lookup? {
+    func lookup(mode: CaptureMode, criterion: String, required: Bool = false, target: Accessibility.Target) async throws -> Lookup? {
         guard try await check(activeOnly: true) else {
             if required { throw GlanceError.message("Focus Gmail in Chrome and reload the existing Jev extension first.") }
             return nil
         }
+        try target.check()
         return try await CompanionAPI.request("gmail", body: ["mode": mode == .cursor ? "cursor" : "screen", "criterion": criterion], type: GmailResult.self).lookup()
     }
 }

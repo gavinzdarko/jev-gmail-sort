@@ -259,8 +259,10 @@
   }).observe(document.body, { childList: true, subtree: true });
 
   // ---------- run ----------
+  let generation = 0;
   async function run(q, complete = null) {
     if (st.running) return;
+    const runID = ++generation;
     st.complete = complete;
     q = (q || "").trim() || DEFAULT_Q;
     closeMenu();
@@ -273,13 +275,15 @@
     paintButton();
     openPanel(q);
     const meta = await loadMeta();
+    if (runID !== generation) return;
     if (meta.error) return fail(meta.error);
-    P(".s-n").textContent = meta.threads.length;
+    if (P(".s-n")) P(".s-n").textContent = meta.threads.length;
     const t0 = performance.now();
     let decisions = 0;
     const lat = [];
     let raf = 0;
     const tick = () => {
+      if (runID !== generation) return;
       P(".s-el") && (P(".s-el").textContent = ((performance.now() - t0) / 1000).toFixed(1) + "s");
       P(".s-dec") && (P(".s-dec").textContent = decisions.toLocaleString());
       if (lat.length && P(".s-p50")) P(".s-p50").textContent = [...lat].sort((a, b) => a - b)[lat.length >> 1] + "ms";
@@ -291,6 +295,7 @@
     const port = (st.port = chrome.runtime.connect({ name: "jev" }));
     let pivots = new Set();
     port.onMessage.addListener((ev) => {
+      if (runID !== generation) return;
       switch (ev.type) {
         case "plan":
           buildPhases(ev.phases);
@@ -377,6 +382,7 @@
   }
 
   function fail(msg) {
+    st.command = null;
     const complete = st.complete; st.complete = null; complete?.({ error: msg });
     st.running = false;
     paintButton();
@@ -388,13 +394,23 @@
   let hover = null;
   document.addEventListener("mousemove", (event) => { hover = { x: event.clientX, y: event.clientY }; }, { passive: true });
   document.addEventListener("mouseleave", () => { hover = null; });
+  function cancelShortcut(id) {
+    if (!st.complete || (id && st.command !== id)) return;
+    generation++; st.port?.disconnect(); st.port = null;
+    fail("Gmail shortcut cancelled.");
+  }
+  document.addEventListener("keydown", (event) => { if (event.code === "Escape") cancelShortcut(); }, true);
   chrome.runtime.onMessage?.addListener((msg, _sender, reply) => {
+    if (msg.type === "glanceCancel") { cancelShortcut(msg.id); reply({ ok: true }); return; }
     if (msg.type === "glancePresence") { reply({ gmail: document.hasFocus() }); return; }
     if (msg.type !== "glanceLookup") return;
     if (!document.hasFocus()) { reply({ error: "Focus this Gmail tab first." }); return; }
     if (msg.mode === "screen") {
       if (st.running) { reply({ error: "Gmail Sort is already running." }); return; }
-      void run(msg.criterion || st.q, reply).catch(() => fail("Gmail Sort could not complete. Check the local server."));
+      st.command = msg.id;
+      void run(msg.criterion || st.q, reply).catch(() => {
+        if (st.complete === reply) fail("Gmail Sort could not complete. Check the local server.");
+      });
       return true;
     }
     // Prefer the actual hovered row; an open message uses its stable Gmail API thread id.

@@ -55,6 +55,21 @@ window.addEventListener('load', async () => {
     check(a.innerHTML === original && !a.querySelector('script'), 'invalid replacement content is rejected before editing');
     const before = requests.length; a.dispatchEvent(new KeyboardEvent('keydown',{key:'a',code:'KeyA',bubbles:true})); await tick();
     check(requests.length === before, 'ordinary typing never captures or sends a draft');
+    behavior = 'normal'; a.innerHTML = original; document.querySelector('input[name="subjectbox"]').focus();
+    a.previousElementSibling.querySelector('button').click(); await tick();
+    check(a.querySelector('b').textContent === 'the', 'the explicit button checks its draft even when Subject was focused');
+    const firstDraft = a.innerHTML; a.focus(); b.previousElementSibling.querySelector('button').click(); await tick();
+    check(b.textContent === 'the other draft' && a.innerHTML === firstDraft, 'clicking another draft button targets that draft only');
+    a.innerHTML = '<b>permis</b>sion and teh'; shortcut(a); await tick();
+    check(requests.at(-1).draft.includes('permission') && a.querySelector('b').textContent === 'permis' && a.textContent === 'permission and the', 'inline formatting preserves complete words and their markup');
+    a.innerHTML = '<span>permis</span><a href="https://example.test/">sion</a> teh'; shortcut(a); await tick();
+    check(requests.at(-1).draft.includes('permis__protected0__') && !requests.at(-1).draft.includes('sion') && a.querySelector('span').textContent === 'permis' && a.textContent.endsWith('the'), 'excluded inline content protects adjoining partial words');
+    a.innerHTML = '<b>t</b>eh reqest'; shortcut(a); await tick();
+    check(a.querySelector('b').textContent === 't' && a.textContent === 'teh request', 'cross-node fixes are skipped while safe independent fixes still apply');
+    a.innerHTML = 'teh reqest'; behavior = 'pending'; shortcut(a); await tick();
+    const range = document.createRange(); range.selectNodeContents(a); range.collapse(false); window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+    pending(); await tick();
+    check(a.textContent === 'teh reqest' && a.previousElementSibling.textContent.includes('Selection changed'), 'moving the caret during a request never restores an old selection or applies stale fixes');
     document.querySelector('#results').textContent = results.join('\n')+'\n\n'+results.length+' browser checks passed.';
   } catch (error) { document.querySelector('#results').textContent = results.join('\n')+'\nFAIL: '+error.message; }
 });

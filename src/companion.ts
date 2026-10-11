@@ -1,9 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import { ContextError, inspectEmail, lookupContext } from "./context";
 import { checkSpelling } from "./spellcheck";
+import { localOrigin } from "./local-origin";
+export { localOrigin } from "./local-origin";
 
-type Presence = { client: string; active: boolean; at: number };
-type Job = { id: string; client: string; mode: string; criterion: string; sent: boolean; finish: (value: any) => void };
+type Presence = { client: string; active: boolean; tab: number | null; at: number };
+type Job = { id: string; client: string; tab: number | null; mode: string; criterion: string; sent: boolean; finish: (value: any) => void };
 const clientID = (value: unknown): value is string => typeof value === "string" && /^[a-zA-Z0-9-]{16,80}$/.test(value);
 export async function boundedJSON(req: Request) {
   if (req.method !== "POST") throw new ContextError("Use POST.", 405);
@@ -19,12 +21,6 @@ export async function boundedJSON(req: Request) {
   }
   try { return JSON.parse(Buffer.concat(parts).toString("utf8")); } catch { throw new ContextError("Invalid JSON."); }
 }
-export function localOrigin(req: Request) {
-  const url = new URL(req.url), origin = req.headers.get("Origin");
-  const extension = !!origin && /^chrome-extension:\/\/[a-p]{32}$/.test(origin);
-  return ["localhost", "127.0.0.1"].includes(url.hostname) && (extension || req.headers.get("Sec-Fetch-Site") !== "cross-site") &&
-    (!origin || origin === url.origin || extension);
-}
 
 // A command carries no email text. Only the focused Gmail tab can claim a pending command.
 export class CompanionHub {
@@ -33,12 +29,14 @@ export class CompanionHub {
   private wake: (() => void) | null = null;
   get active() { return !!this.presence?.active && Date.now() - this.presence.at < 6000; }
   get connected() { return !!this.presence && Date.now() - this.presence.at < 6000; }
-  heartbeat(client: string, active: boolean) {
-    if (active || !this.active || this.presence?.client === client) this.presence = { client, active, at: Date.now() };
+  current(client: string) { return this.job?.client === client ? this.job.id : null; }
+  heartbeat(client: string, active: boolean, tab: number | null = null) {
+    if (active || !this.active || this.presence?.client === client) this.presence = { client, active, tab, at: Date.now() };
     this.wake?.();
   }
   async next(client: string, signal: AbortSignal) {
-    const ready = () => this.active && this.presence?.client === client && this.job?.client === client && !this.job.sent;
+    if (signal.aborted) return null;
+    const ready = () => !signal.aborted && this.active && this.presence?.client === client && this.job?.client === client && this.presence.tab === this.job.tab && !this.job.sent;
     if (!ready()) await new Promise<void>((resolve) => {
       const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); if (this.wake === finish) this.wake = null; resolve(); };
       const timer = setTimeout(finish, 18_000); this.wake?.(); this.wake = finish;
@@ -46,7 +44,7 @@ export class CompanionHub {
     });
     if (!ready()) return null;
     this.job!.sent = true;
-    const { id, mode, criterion } = this.job!; return { id, mode, criterion };
+    const { id, tab, mode, criterion } = this.job!; return { id, tab, mode, criterion };
   }
   async request(mode: string, criterion: string, signal: AbortSignal) {
     if (!this.active) throw new ContextError("Focus Gmail and reload the existing Jev extension first.", 409);
@@ -60,7 +58,7 @@ export class CompanionHub {
       };
       const abort = () => finish({ error: "Gmail shortcut cancelled." });
       const timer = setTimeout(() => finish({ error: "Gmail shortcut timed out. Check the extension and server." }), 45_000);
-      this.job = { id, client: this.presence!.client, mode, criterion, sent: false, finish };
+      this.job = { id, client: this.presence!.client, tab: this.presence!.tab, mode, criterion, sent: false, finish };
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) abort(); else this.wake?.();
     });
@@ -92,7 +90,12 @@ export function companionHandler(options: { token: string; hub?: CompanionHub; r
       const input = await boundedJSON(req);
       if (extension) {
         if (!clientID(input?.client)) throw new ContextError("Invalid extension session.");
-        if (path.endsWith("/presence")) { hub.heartbeat(input.client, input.active === true); return json({ ok: true }); }
+        if (path.endsWith("/presence")) {
+          const tab = Number.isInteger(input.tab) && input.tab >= 0 ? input.tab : null;
+          if (input.active === true && tab === null) throw new ContextError("Invalid active Gmail tab.");
+          hub.heartbeat(input.client, input.active === true, tab);
+          return json({ ok: true, command: hub.current(input.client) });
+        }
         if (path.endsWith("/next")) return json({ command: await hub.next(input.client, req.signal) });
         if (path.endsWith("/result")) { hub.respond(input.client, input.id, input.result); return json({ ok: true }); }
         throw new ContextError("Unknown extension route.", 404);
