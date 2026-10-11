@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Inbox - ext test</title>
+<link rel="stylesheet" href="/extension/content.css">
+<style>
+  body { margin: 0; font: 14px Roboto, Arial, sans-serif; background: #f6f8fc; }
+  .top { height: 64px; display: flex; align-items: center; padding: 0 20px; font: 22px "Google Sans", Arial; color: #444746; }
+  [role=main] { margin: 0 16px 0 256px; background: #fff; border-radius: 16px; overflow: hidden; }
+  div[gh=mtb] { height: 48px; display: flex; align-items: center; padding: 0 12px; }
+  div[gh=mtb] .ic { width: 40px; height: 40px; display: grid; place-items: center; color: #444746; }
+  table.F { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  tr.zA { height: 40px; border-bottom: 1px solid #f1f3f4; background: #f2f6fc; cursor: pointer; }
+  tr.zA.zE { background: #fff; font-weight: 700; }
+  tr.zA td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
+  td.c { width: 60px; } td.yX { width: 200px; } td.xW { width: 80px; text-align: right; font-size: 12px; }
+  .y2 { color: #5e5e5e; font-weight: 400; }
+</style></head>
+<body>
+<div class="top">Gmail (Gmail-DOM mock for the extension)</div>
+<div role="main">
+  <div gh="mtb"><span class="ic">☐</span><span class="ic">↻</span><span class="ic">⋮</span></div>
+  <table class="F"><tbody id="tb"></tbody></table>
+</div>
+<script>
+  // Shim of the two chrome.runtime calls the content script makes, backed by the same server.
+  window.chrome = { runtime: {
+    sendMessage: (m) => fetch(`/api/recent?hours=${m.hours}`).then((r) => r.json()),
+    connect: () => {
+      let es, fns = [];
+      return {
+        onMessage: { addListener: (f) => fns.push(f) },
+        postMessage: (m) => {
+          es = new EventSource(`/api/analyze?src=recent&hours=${m.hours}&algo=${m.algo}&q=${encodeURIComponent(m.q)}`);
+          es.onmessage = (e) => fns.forEach((f) => f(JSON.parse(e.data)));
+        },
+        disconnect: () => es?.close(),
+      };
+    },
+  } };
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  fetch("/api/recent?hours=24").then((r) => r.json()).then((d) => {
+    // Gmail shows the Primary tab only; mimic that so some ranked threads are off-screen.
+    document.getElementById("tb").innerHTML = d.threads.filter((t) => t.category === "PRIMARY" || t.category === "UPDATES").map((t) => `
+      <tr class="zA ${t.unread ? "zE" : "yO"}">
+        <td class="c">☆</td>
+        <td class="yX"><span email="${esc(t.from.email)}">${esc(t.senders.join(", "))}</span></td>
+        <td class="xY a4W"><div class="xS"><div class="xT"><div class="y6"><span class="bog"><span data-thread-id="#thread-f:${BigInt("0x" + t.id)}" data-legacy-thread-id="${t.id}">${esc(t.subject)}</span></span></div><span class="y2"> - ${esc(t.snippet)}</span></div></div></td>
+        <td class="xW">${new Date(t.date).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</td>
+      </tr>`).join("");
+    const s = document.createElement("script");
+    s.src = "/extension/content.js";
+    document.body.appendChild(s);
+  });
+</script>
+</body></html>
