@@ -123,7 +123,8 @@ async function rank(items, task, emit) {
   const K = Math.min(12, n);
   const P = Math.min(8, Math.max(2, Math.floor(n / 12)));
   const REFINE = 3;
-  const phases = algo === "full" ? [
+  const plain = !!task.plain && algo === "swiss";
+  const phases = plain ? [...Array.from({ length: swissRounds }, (_, i) => ({ key: `s${i + 1}`, label: `Swiss round ${i + 1} of ${swissRounds}`, total: Math.floor(n / 2) })), { key: "bt", label: "Bradley–Terry fit" }] : algo === "full" ? [
     { key: "triage", label: `Triage ${n} ${task.noun}s`, total: n },
     { key: "full", label: `All ${n * (n - 1) / 2} pairs at once`, total: n * (n - 1) / 2 },
     { key: "bt", label: "Bradley–Terry fit" }
@@ -199,9 +200,14 @@ async function rank(items, task, emit) {
     const strength = fit();
     return finish(strength);
   }
-  emit({ type: "phase", key: "triage", total: n });
-  await triage();
-  const seeded = [...ids].sort((x, y) => seed.get(y) - seed.get(x));
+  if (plain)
+    for (const id of ids)
+      seed.set(id, 2);
+  else {
+    emit({ type: "phase", key: "triage", total: n });
+    await triage();
+  }
+  const seeded = plain ? shuffle([...ids]) : [...ids].sort((x, y) => seed.get(y) - seed.get(x));
   standings(seeded);
   if (algo === "swiss") {
     for (let round = 1;round <= swissRounds; round++) {
@@ -273,6 +279,8 @@ async function rank(items, task, emit) {
       standings(order);
     }
   }
+  if (plain)
+    return finish(fit());
   const top = orderBy(fit()).slice(0, K);
   const rr = [];
   for (let i = 0;i < K; i++)

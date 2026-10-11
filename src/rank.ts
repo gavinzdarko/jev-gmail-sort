@@ -113,6 +113,7 @@ export interface RankTask {
   criterion: string; // the sentence we sort by
   guide?: string[]; // extra guidance (used for the default criterion)
   algo?: "auto" | "full" | "pivot" | "swiss";
+  plain?: boolean; // Swiss rounds only: no triage read first and no top round robin after
 }
 
 const TIERS: Record<string, string> = {
@@ -168,8 +169,10 @@ export async function rank(items: RankItem[], task: RankTask, emit: Emit) {
   const K = Math.min(12, n);
   const P = Math.min(8, Math.max(2, Math.floor(n / 12)));
   const REFINE = 3;
-  const phases =
-    algo === "full"
+  const plain = !!task.plain && algo === "swiss";
+  const phases = plain
+    ? [...Array.from({ length: swissRounds }, (_, i) => ({ key: `s${i + 1}`, label: `Swiss round ${i + 1} of ${swissRounds}`, total: Math.floor(n / 2) })), { key: "bt", label: "Bradley–Terry fit" }]
+    : algo === "full"
       ? [
           { key: "triage", label: `Triage ${n} ${task.noun}s`, total: n },
           { key: "full", label: `All ${(n * (n - 1)) / 2} pairs at once`, total: (n * (n - 1)) / 2 },
@@ -266,9 +269,12 @@ export async function rank(items: RankItem[], task: RankTask, emit: Emit) {
     return finish(strength);
   }
 
-  emit({ type: "phase", key: "triage", total: n });
-  await triage();
-  const seeded = [...ids].sort((x, y) => seed.get(y)! - seed.get(x)!);
+  if (plain) for (const id of ids) seed.set(id, 2); // everyone starts level
+  else {
+    emit({ type: "phase", key: "triage", total: n });
+    await triage();
+  }
+  const seeded = plain ? shuffle([...ids]) : [...ids].sort((x, y) => seed.get(y)! - seed.get(x)!);
   standings(seeded);
 
   if (algo === "swiss") {
@@ -345,6 +351,7 @@ export async function rank(items: RankItem[], task: RankTask, emit: Emit) {
     }
   }
 
+  if (plain) return finish(fit());
   // The head of the list is what people read: the top K play a full round robin.
   const top = orderBy(fit()).slice(0, K);
   const rr: [string, string][] = [];

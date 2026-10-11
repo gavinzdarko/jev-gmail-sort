@@ -89,7 +89,8 @@ async function suggest(items) {
 let warmAt = 0;
 const preconnect = () => Date.now() - warmAt > 60000 && ((warmAt = Date.now()), fetch("https://api.typesafe.ai/v1/systemone", { method: "OPTIONS" }).catch(() => {}));
 
-chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
+// The toolbar icon opens the "sort this page" side panel (panel.js).
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 chrome.runtime.onMessage.addListener((m, _sender, reply) => {
   if (m.type === "options") chrome.runtime.openOptionsPage();
   // Gmail showed a list: read those threads now, so pressing Sort doesn't wait on Gmail.
