@@ -3,6 +3,16 @@
 const SERVER = "http://localhost:8383";
 
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg.type === "spellcheck") {
+    fetch(`${SERVER}/api/spellcheck`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draft: msg.draft, context: msg.context }), signal: AbortSignal.timeout(9000)
+    }).then(async (response) => {
+      const result = await response.json();
+      reply(response.ok ? result : { error: result.error || "Jev spell check failed. Your draft is unchanged." });
+    }).catch(() => reply({ error: "Can't reach Jev spell check. Start the existing server with: bun run server.ts" }));
+    return true;
+  }
   if (msg.type !== "recent") return;
   fetch(`${SERVER}/api/recent?hours=${msg.hours || 24}${msg.refresh ? "&refresh=1" : ""}`)
     .then((r) => r.json())
